@@ -1,11 +1,7 @@
 from __future__ import annotations
 
-import time
-from time import perf_counter
-
 import numpy as np
 from model2vec import StaticModel
-from reach import Reach
 from tqdm import tqdm
 
 from semhash.utils import CustomReach
