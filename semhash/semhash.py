@@ -52,10 +52,10 @@ class SemHash:
 
             return np.array(list(deduplicated_indices)), duplicate_to_original_mapping
         else:
-            # Deduplicate across two lists (embeddings_a vs embeddings_b)
+            # Deduplicate across two lists (embeddings1 vs embeddings2)
             reach = Reach(vectors=embeddings1, items=[str(i) for i in range(len(embeddings1))])
             deduplicated_indices_in_b = set()  # Start with an empty set for deduplicated indices
-            duplicate_to_original = {}
+            duplicate_to_original_mapping = {}
 
             # Use nearest_neighbor_indices to find duplicates across datasets
             results = reach.nearest_neighbor_indices(
@@ -63,14 +63,14 @@ class SemHash:
             )
 
             for i, similar_indices in enumerate(tqdm(results, total=len(embeddings2))):
-                if similar_indices.size == 0:  # No duplicates found, so add to deduplicated indices
+                if similar_indices.size == 0:  # No duplicates found, add to deduplicated indices
                     deduplicated_indices_in_b.add(i)
                 else:
                     # If a duplicate is found, map to the first similar item in embeddings_a
-                    duplicate_to_original[i] = int(similar_indices[0])
+                    duplicate_to_original_mapping[i] = int(similar_indices[0])
 
             # Return deduplicated indices and duplicate mapping
-            return np.array(list(deduplicated_indices_in_b)), duplicate_to_original
+            return np.array(list(deduplicated_indices_in_b)), duplicate_to_original_mapping
 
     def deduplicate(
         self,
