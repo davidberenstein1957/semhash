@@ -1407,15 +1407,11 @@ wheels = [
 
 [[package]]
 name = "reach"
-version = "4.1.1"
-source = { registry = "https://pypi.org/simple" }
+version = "5.0.0"
+source = { git = "https://github.com/stephantul/reach?rev=main#f082e1aa879d1a58c34c72f1491ad962f84893f1" }
 dependencies = [
     { name = "numpy" },
     { name = "tqdm" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/2b/d3/be84f08baff840bed2f9f04287f741d026860fba81b664e6dea521a6780a/reach-4.1.1.tar.gz", hash = "sha256:86e48ac0e658a000f6af523a4b05a9ee3735968b9348b9e52431801a92b5bc88", size = 21802 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a8/30/896163964dcccd358ebafd77bedbdd79fc844ab7ad2a664e6c4ba577457b/reach-4.1.1-py3-none-any.whl", hash = "sha256:473299ecc8afb114704cbf574c81365a9292f3c619487fafd1b3b5f4b5fbcd4b", size = 15588 },
 ]
 
 [[package]]
@@ -1710,7 +1706,7 @@ requires-dist = [
     { name = "pre-commit", marker = "extra == 'dev'" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-coverage", marker = "extra == 'dev'" },
-    { name = "reach" },
+    { name = "reach", git = "https://github.com/stephantul/reach?rev=main" },
     { name = "ruff", marker = "extra == 'dev'" },
 ]
 

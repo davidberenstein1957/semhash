@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 from model2vec import StaticModel
+from reach import Reach
 from tqdm import tqdm
-
-from semhash.utils import CustomReach
 
 
 class SemHash:
@@ -29,12 +28,12 @@ class SemHash:
         :return: Deduplicated indices and a mapping of removed indices to their original counterparts.
         """
         if embeddings2 is None:
-            reach = CustomReach(vectors=embeddings1, items=[str(i) for i in range(len(embeddings1))])
+            reach = Reach(vectors=embeddings1, items=[str(i) for i in range(len(embeddings1))])
             # Use a set for deduplicated indices and keep track of duplicates
             deduplicated_indices = set(range(len(embeddings1)))  # Start with all indices as deduplicated
             duplicate_to_original_mapping = {}
 
-            results = reach.indices_threshold(
+            results = reach.nearest_neighbor_indices(
                 embeddings1, threshold=threshold, batch_size=batch_size, show_progressbar=True
             )
             # Process duplicates
@@ -54,12 +53,12 @@ class SemHash:
             return np.array(list(deduplicated_indices)), duplicate_to_original_mapping
         else:
             # Deduplicate across two lists (embeddings_a vs embeddings_b)
-            reach = CustomReach(vectors=embeddings1, items=[str(i) for i in range(len(embeddings1))])
+            reach = Reach(vectors=embeddings1, items=[str(i) for i in range(len(embeddings1))])
             deduplicated_indices_in_b = set()  # Start with an empty set for deduplicated indices
             duplicate_to_original = {}
 
-            # Use indices_threshold to find duplicates across datasets
-            results = reach.indices_threshold(
+            # Use nearest_neighbor_indices to find duplicates across datasets
+            results = reach.nearest_neighbor_indices(
                 embeddings2, threshold=threshold, batch_size=batch_size, show_progressbar=True
             )
 
