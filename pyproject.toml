@@ -9,6 +9,7 @@ dependencies = [
     "datasets",
     "model2vec",
     "reach@git+https://github.com/stephantul/reach@main",
+    "sentence-transformers",
 
 ]
 
