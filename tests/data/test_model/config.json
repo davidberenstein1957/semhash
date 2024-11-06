@@ -1,0 +1,1 @@
+{"tokenizer_name": "BAAI/bge-base-en-v1.5", "apply_pca": 8, "apply_zipf": true, "hidden_dim": 8, "seq_length": 1000000, "normalize": false}
