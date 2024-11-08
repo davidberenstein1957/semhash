@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 from model2vec import StaticModel
-from reach import Reach
+from nearest.backends.basic import BasicBackend
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 
@@ -17,7 +17,6 @@ class SemHash:
         embeddings1: np.ndarray,
         embeddings2: np.ndarray | None = None,
         threshold: float = 0.9,
-        batch_size: int = 1024,
     ) -> tuple[np.ndarray, dict[int, int]]:
         """
         Deduplicate embeddings within one list or across two lists.
@@ -25,24 +24,23 @@ class SemHash:
         :param embeddings1: Embeddings of the first list of texts.
         :param embeddings2: Optional embeddings of the second list of texts.
         :param threshold: Similarity threshold for deduplication.
-        :param batch_size: Batch size for similarity computation.
         :return: Deduplicated indices and a mapping of duplicates to originals.
         """
-        reach = Reach(vectors=embeddings1, items=[str(i) for i in range(len(embeddings1))])
+        # Initialize BasicBackend with the embeddings
+        nearest = BasicBackend.from_vectors(vectors=embeddings1, dim=embeddings1.shape[1])
 
         if embeddings2 is None:
+            # Handle deduplication within one list
             deduplicated_indices = set(range(len(embeddings1)))
             duplicate_to_original_mapping = {}
 
-            results = reach.nearest_neighbor_indices(
-                embeddings1, threshold=threshold, batch_size=batch_size, show_progressbar=True
-            )
+            results = nearest.threshold(embeddings1, threshold=1 - threshold)
 
             for i, similar_indices in enumerate(tqdm(results, total=len(embeddings1))):
                 if i not in deduplicated_indices:
                     continue  # Skip already marked duplicates
 
-                # Remove the current index from similar items
+                # Exclude the current index from similar items
                 similar_indices = [sim_idx for sim_idx in similar_indices if sim_idx != i]
 
                 for sim_idx in similar_indices:
@@ -52,15 +50,14 @@ class SemHash:
 
             return np.array(list(deduplicated_indices)), duplicate_to_original_mapping
         else:
+            # Handle deduplication across two lists
             deduplicated_indices_in_b = set()
             duplicate_to_original_mapping = {}
 
-            results = reach.nearest_neighbor_indices(
-                embeddings2, threshold=threshold, batch_size=batch_size, show_progressbar=True
-            )
+            results = nearest.threshold(embeddings2, threshold=1 - threshold)
 
             for i, similar_indices in enumerate(tqdm(results, total=len(embeddings2))):
-                if similar_indices.size == 0:
+                if len(similar_indices) == 0:
                     deduplicated_indices_in_b.add(i)
                 else:
                     # Map to the first similar item in embeddings1
