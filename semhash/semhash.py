@@ -1,88 +1,157 @@
 from __future__ import annotations
 
+from typing import Sequence, Union, cast
+
 import numpy as np
 from model2vec import StaticModel
-from sentence_transformers import SentenceTransformer
-from tqdm import tqdm
 from vicinity import Backend, Vicinity
+
+Record = Union[str, dict[str, str]]
 
 
 class SemHash:
-    def __init__(self, model: SentenceTransformer | StaticModel) -> None:
-        """Initialize SemHash."""
+    def __init__(self, model: StaticModel, columns: list[str] | None = None) -> None:
+        """
+        Initialize SemHash.
+
+        :param model: A model to use for featurization.
+        :param columns: Columns to featurize. Required if records are dictionaries.
+        """
         self.model = model
+        self.columns = columns
+        self.vicinity: Vicinity | None = None
 
-    def deduplicate_embeddings(
-        self,
-        embeddings1: np.ndarray,
-        embeddings2: np.ndarray | None = None,
-        threshold: float = 0.9,
-    ) -> tuple[np.ndarray, dict[int, int]]:
+    def _featurize(self, records: Sequence[Record]) -> np.ndarray:
         """
-        Deduplicate embeddings within one list or across two lists.
+        Featurize a list of records using the model.
 
-        :param embeddings1: Embeddings of the first list of texts.
-        :param embeddings2: Optional embeddings of the second list of texts.
-        :param threshold: Similarity threshold for deduplication.
-        :return: Deduplicated indices and a mapping of duplicates to originals.
+        :param records: A list of records (either strings or dictionaries).
+        :return: The embeddings of the records.
+        :raises ValueError: If columns are not specified when passing dictionaries.
         """
-        # Initialize BasicBackend with the embeddings
-        items = list(range(len(embeddings1)))
-        vicinity = Vicinity.from_vectors_and_items(vectors=embeddings1, items=items, backend_type=Backend.BASIC)  # type: ignore
-        if embeddings2 is None:
-            # Handle deduplication within one list
-            deduplicated_indices = set(range(len(embeddings1)))
-            duplicate_to_original_mapping = {}
+        if isinstance(records[0], dict):
+            if self.columns is None:
+                raise ValueError("Columns must be specified when passing dictionaries.")
 
-            results = vicinity.query_threshold(embeddings1, threshold=1 - threshold)
+            records = cast(Sequence[dict[str, str]], records)
+            # Extract the embeddings for each column across all records
+            embeddings_per_column = []
+            for column in self.columns:
+                column_texts = [r[column] for r in records]
+                column_embeddings = self.model.encode(column_texts)
+                embeddings_per_column.append(np.asarray(column_embeddings))
 
-            for i, similar_indices in enumerate(tqdm(results, total=len(embeddings1))):
-                if i not in deduplicated_indices:
-                    continue  # Skip already marked duplicates
+            return np.concatenate(embeddings_per_column, axis=1)
 
-                # Exclude the current index from similar items
-                similar_indices = [sim_idx for sim_idx in similar_indices if sim_idx != i]
-
-                for sim_idx in similar_indices:
-                    if sim_idx in deduplicated_indices:
-                        deduplicated_indices.remove(sim_idx)
-                        duplicate_to_original_mapping[sim_idx] = i  # Map duplicate to original
-
-            return np.array(list(deduplicated_indices)), duplicate_to_original_mapping
         else:
-            # Handle deduplication across two lists
-            deduplicated_indices_in_b = set()
-            duplicate_to_original_mapping = {}
+            # Records is a list of strings
+            embeddings = self.model.encode(records)
+            return np.stack(embeddings)
 
-            results = vicinity.query_threshold(embeddings2, threshold=1 - threshold)
+    def _unpack_record(self, record: Record) -> str:
+        r"""
+        Unpack a record into a single string.
 
-            for i, similar_indices in enumerate(tqdm(results, total=len(embeddings2))):
-                if len(similar_indices) == 0:
-                    deduplicated_indices_in_b.add(i)
-                else:
-                    # Map to the first similar item in embeddings1
-                    duplicate_to_original_mapping[i] = similar_indices[0]
+        If the record is a dictionary, it uses self.columns to determine the order of the text segments.
+        Each text is cleaned by replacing '\t' with ' '. The texts are then joined by '\t'.
 
-            return np.array(list(deduplicated_indices_in_b)), duplicate_to_original_mapping
+        If the record is a string, it just replaces '\t' with ' ' and returns it.
+        """
+        if isinstance(record, dict):
+            if self.columns is None:
+                raise ValueError("Columns must be specified when passing dictionaries.")
+
+            column_texts = []
+            for column in self.columns:
+                text = record[column].replace("\t", " ")
+                column_texts.append(text)
+            return "\t".join(column_texts)
+        else:
+            # Record is a string
+            return record.replace("\t", " ")
+
+    def fit(self, records: Sequence[Record]) -> None:
+        """
+        Embed the records and fit a vicinity index on the embeddings.
+
+        :param records: The dataset to fit on. Can be a list of dictionaries or a list of strings.
+        :raises ValueError: If columns are not specified when records are dictionaries.
+        """
+        if self.columns is None and isinstance(records[0], dict):
+            raise ValueError("Columns must be specified when passing dictionaries.")
+
+        embeddings = self._featurize(records)
+        items = [self._unpack_record(record) for record in records]
+        self.vicinity = Vicinity.from_vectors_and_items(vectors=embeddings, items=items, backend_type=Backend.BASIC)
 
     def deduplicate(
         self,
-        texts1: list[str],
-        texts2: list[str] | None = None,
+        records: Sequence[Record],
         threshold: float = 0.9,
-    ) -> tuple[np.ndarray, dict[int, int]]:
+    ) -> Sequence[Record]:
         """
-        Perform deduplication on one or two lists of texts.
+        Perform deduplication against the fitted index.
 
-        :param texts1: List of strings for the first dataset.
-        :param texts2: Optional list of strings for the second dataset.
+        This method assumes you have already fit on a reference dataset (e.g., a train set).
+        It will remove any items from 'records' that are similar above a certain threshold
+        to any item in the fitted dataset.
+
+        :param records: A new set of records (e.g., test set) to deduplicate against the fitted dataset.
         :param threshold: Similarity threshold for deduplication.
-        :return: Deduplicated indices and a mapping of duplicates to originals.
+        :return: A deduplicated list of records.
+        :raises ValueError: If no fitted index is found.
         """
-        embeddings1 = self.model.encode(texts1, show_progressbar=True)
-        embeddings2 = self.model.encode(texts2, show_progressbar=True) if texts2 else None
+        if self.vicinity is None:
+            raise ValueError("No fitted index found. Call semhash.fit(records) before calling deduplicate.")
 
-        deduplicated_indices, duplicate_mapping = self.deduplicate_embeddings(
-            embeddings1, embeddings2=embeddings2, threshold=threshold
-        )
-        return deduplicated_indices, duplicate_mapping
+        # Compute embeddings for the new records
+        embeddings = self._featurize(records)
+
+        # Query the fitted index
+        results = self.vicinity.query_threshold(embeddings, threshold=1 - threshold)
+
+        # Keep only those records for which no similar item was found
+        deduplicated_records = []
+        for record, similar_items in zip(records, results):
+            if not similar_items:
+                # No duplicates found, keep this record
+                deduplicated_records.append(record)
+
+        return deduplicated_records
+
+    def fit_deduplicate(
+        self,
+        records: Sequence[Record],
+        threshold: float = 0.9,
+    ) -> Sequence[Record]:
+        """
+        Fit and deduplicate a single dataset.
+
+        This method removes any items that have duplicates within the same dataset.
+
+        :param records: The dataset to fit and deduplicate.
+        :param threshold: Similarity threshold for deduplication.
+        :return: A deduplicated list of records.
+        """
+        # Create embeddings and fit the index
+        embeddings = self._featurize(records)
+        items = [self._unpack_record(record) for record in records]
+        self.vicinity = Vicinity.from_vectors_and_items(vectors=embeddings, items=items, backend_type=Backend.BASIC)
+
+        # Get similar items for each record
+        results = self.vicinity.query_threshold(embeddings, threshold=1 - threshold)
+
+        deduplicated_records = []
+        seen_items = set()
+        for record, similar_items in zip(records, results):
+            # similar_items includes 'record' itself
+            # If we've seen any of these items before, this is a duplicate cluster.
+            if any(item in seen_items for item in similar_items):
+                continue
+            else:
+                # This is the first time we see this cluster of similar items
+                deduplicated_records.append(record)
+                # Mark all items in this cluster as seen
+                seen_items.update(similar_items)
+
+        return deduplicated_records
