@@ -12,17 +12,16 @@ Record = Union[str, dict[str, str]]
 
 
 class SemHash:
-    def __init__(self, model: Encoder | None = None, columns: list[str] | None = None) -> None:
+    def __init__(self, model: Encoder | None = None, columns: list[str] | None = None, ann: bool = False) -> None:
         """
         Initialize SemHash.
 
         :param model: A model to use for featurization. Defaults to minishlab/potion-base-8M.
         :param columns: Columns to featurize. Required if records are dictionaries.
+        :param ann: Whether to use approximate nearest neighbors for deduplication. Default is False.
         """
-        if model is None:
-            model = StaticModel.from_pretrained("minishlab/potion-base-8M")
-        else:
-            self.model = model
+        self.model = model if model else StaticModel.from_pretrained("minishlab/potion-base-8M")
+        self.backend = Backend.USEARCH if ann else Backend.BASIC
         self.columns = columns
         self.vicinity: Vicinity | None = None
 
@@ -76,19 +75,23 @@ class SemHash:
             # Record is a string
             return record.replace("\t", " ")
 
-    def fit(self, records: Sequence[Record]) -> None:
+    def fit(self, records: Sequence[Record]) -> np.ndarray:
         """
         Embed the records and fit a vicinity index on the embeddings.
 
         :param records: The dataset to fit on. Can be a list of dictionaries or a list of strings.
+        :return: The embeddings of the records.
         :raises ValueError: If columns are not specified when records are dictionaries.
         """
         if self.columns is None and isinstance(records[0], dict):
             raise ValueError("Columns must be specified when passing dictionaries.")
 
+        # Compute embeddings for the records and unpack the records
         embeddings = self._featurize(records)
         items = [self._unpack_record(record) for record in records]
-        self.vicinity = Vicinity.from_vectors_and_items(vectors=embeddings, items=items, backend_type=Backend.BASIC)
+        # Fit the index
+        self.vicinity = Vicinity.from_vectors_and_items(vectors=embeddings, items=items, backend_type=self.backend)
+        return embeddings
 
     def deduplicate(
         self,
@@ -140,12 +143,10 @@ class SemHash:
         :return: A deduplicated list of records.
         """
         # Create embeddings and fit the index
-        embeddings = self._featurize(records)
-        items = [self._unpack_record(record) for record in records]
-        self.vicinity = Vicinity.from_vectors_and_items(vectors=embeddings, items=items, backend_type=Backend.BASIC)
+        embeddings = self.fit(records)
 
         # Get similar items for each record
-        results = self.vicinity.query_threshold(embeddings, threshold=1 - threshold)
+        results = self.vicinity.query_threshold(embeddings, threshold=1 - threshold)  # type: ignore
 
         deduplicated_records = []
         seen_items = set()
