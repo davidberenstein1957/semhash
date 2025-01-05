@@ -33,27 +33,40 @@ Install the package with:
 pip install semhash
 ```
 
-Deduplicate a single dataset with the following code:
+Deduplicate a single dataset with the following code (note: this example assumes you have `datasets` installed, which you can install with `pip install datasets`):
 
 ```python
-from model2vec import StaticModel
+from datasets import load_dataset
 from semhash import SemHash
 
-# Load an embedding model
-model = StaticModel.from_pretrained("minishlab/potion-base-8M")
+# Initialize a SemHash instance
+semhash = SemHash()
 
-# Initialize a SemHash with the model
-semhash = SemHash(model=model)
-
-# Create some texts to deduplicate
-texts = [
-        "It's dangerous to go alone!",
-        "It's dangerous to go alone!",  # Exact duplicate
-        "It's not safe to go by yourself!",  # Semantically similar
-]
+# Load a dataset to deduplicate
+texts = load_dataset("ag_news", split="train")["text"]
 
 # Deduplicate the texts
-deduplicated_texts = semhash.fit_deduplicate(records=texts, threshold=0.5)
+deduplicated_texts = semhash.fit_deduplicate(records=texts)
+```
+
+Or, deduplicate across two datasets with the following code (eliminating train/test leakage):
+
+```python
+from datasets import load_dataset
+from semhash import SemHash
+
+# Initialize a SemHash instance
+semhash = SemHash()
+
+# Load two datasets to deduplicate
+train_texts = load_dataset("ag_news", split="train")["text"]
+test_texts = load_dataset("ag_news", split="test")["text"]
+
+# Fit on the training data
+semhash.fit(records=train_texts)
+
+# Deduplicate the test data against the training data
+deduplicated_test_texts = semhash.deduplicate(records=test_texts)
 ```
 
 For more advanced usage, you can also deduplicate across multiple datasets, or deduplicate multi-column datasets. Examples are provided in the [usage](#usage) section.
@@ -73,31 +86,26 @@ semhash = SemHash(model=model, ann=False)
 
 ## Usage
 
+The following examples show the various ways you can use SemHash to deduplicate datasets. These examples assume you have the `datasets` library installed, which you can install with `pip install datasets`.
+
 <details>
 <summary>  Deduplicate a single dataset </summary>
 <br>
 
-The following code snippet shows how to deduplicate a single dataset using SemHash:
+The following code snippet shows how to deduplicate a single dataset using SemHash (in this example, the train split of the [AG News dataset](https://huggingface.co/datasets/fancyzhx/ag_news)):
 
 ```python
-from model2vec import StaticModel
+from datasets import load_dataset
 from semhash import SemHash
 
-# Load an embedding model
-model = StaticModel.from_pretrained("minishlab/potion-base-8M")
+# Initialize a SemHash instance
+semhash = SemHash()
 
-# Initialize a SemHash with the model
-semhash = SemHash(model=model)
-
-# Create some texts to deduplicate
-texts = [
-        "It's dangerous to go alone!",
-        "It's dangerous to go alone!",  # Exact duplicate
-        "It's not safe to go by yourself!",  # Semantically similar
-]
+# Load a dataset to deduplicate
+texts = load_dataset("ag_news", split="train")["text"]
 
 # Deduplicate the texts
-deduplicated_texts = semhash.fit_deduplicate(records=texts, threshold=0.5)
+deduplicated_texts = semhash.fit_deduplicate(records=texts)
 ```
 </details>
 
@@ -105,34 +113,24 @@ deduplicated_texts = semhash.fit_deduplicate(records=texts, threshold=0.5)
 <summary>  Deduplicate across two datasets </summary>
 <br>
 
-The following code snippet shows how to deduplicate across two datasets using SemHash (in this example, a training and test dataset):
+The following code snippet shows how to deduplicate across two datasets using SemHash (in this example, the train/test split of the [AG News dataset](https://huggingface.co/datasets/fancyzhx/ag_news)):
 
 ```python
-from model2vec import StaticModel
+from datasets import load_dataset
 from semhash import SemHash
 
-# Load an embedding model
-model = StaticModel.from_pretrained("minishlab/potion-base-8M")
+# Initialize a SemHash instance
+semhash = SemHash()
 
-# Initialize a SemHash with the model
-semhash = SemHash(model=model)
-
-# Create some texts to deduplicate
-train = [
-    "It's dangerous to go alone!",
-    "It's a secret to everybody.",
-    "Ganondorf has invaded Hyrule!",
-]
-test = [
-    "It's dangerous to go alone!",  # Exact duplicate
-    "It's not safe to go by yourself!",  # Semantically similar
-    "The master sword seals the darkness",
-]
+# Load two datasets to deduplicate
+train_texts = load_dataset("ag_news", split="train")["text"]
+test_texts = load_dataset("ag_news", split="test")["text"]
 
 # Fit on the training data
-semhash.fit(records=train)
+semhash.fit(records=train_texts)
+
 # Deduplicate the test data against the training data
-deduplicated_texts = semhash.deduplicate(records=test, threshold=0.5)
+deduplicated_test_texts = semhash.deduplicate(records=test_texts)
 ```
 
 </details>
@@ -141,32 +139,71 @@ deduplicated_texts = semhash.deduplicate(records=test, threshold=0.5)
 <summary>  Deduplicate multi-column datasets </summary>
 <br>
 
-The following code snippet shows how to deduplicate multi-column datasets using SemHash (in this example, a QA dataset with questions, contexts, and answers):
+The following code snippet shows how to deduplicate multi-column datasets using SemHash (in this example, the train split of the QA dataset [SQuAD 2.0](https://huggingface.co/datasets/rajpurkar/squad_v2), which consists of questions, contexts, and answers):
+
+```python
+from datasets import load_dataset
+from semhash import SemHash
+
+# Initialize SemHash with the columns to deduplicate
+semhash = SemHash(columns=["question", "context", "answers"])
+
+# Load the dataset
+dataset = load_dataset("squad_v2", split="train")
+
+# Convert the dataset to a list of dictionaries
+records = [
+    {"context": row["context"], "question": row["question"], "answers": str(row["answers"])}
+    for row in dataset
+]
+
+# Deduplicate the records
+deduplicated_records = semhash.fit_deduplicate(records=records)
+```
+
+</details>
+
+<details>
+<summary>  Using custom encoders </summary>
+<br>
+
+The following code snippet shows how to use a custom encoder with SemHash:
 
 ```python
 from model2vec import StaticModel
 from semhash import SemHash
 
-# Load an embedding model
-model = StaticModel.from_pretrained("minishlab/potion-base-8M")
+# Load an embedding model (in this example, a multilingual model)
+model = StaticModel.from_pretrained("minishlab/M2V_multilingual_output")
 
-# Initialize a SemHash with the model and columns to deduplicate
-semhash = SemHash(model=model, columns=["question", "context", "answer"])
+# Initialize a SemHash with the model and custom encoder
+semhash = SemHash(model=model)
 
-# Create some texts to deduplicate
-records = [
-    {"question": "What is the hero's name?", "context": "The hero is Link", "answer": "Link"},
-    {"question": "What is the hero's name?", "context": "The hero is Link", "answer": "Link"},  # Exact duplicate
-    {
-        "question": "Who is the protagonist?",
-        "context": "In this story, Link is the hero",
-        "answer": "Link",
-    },  # Semantically similar
-    {"question": "Who is the princess?", "context": "The princess is Zelda", "answer": "Zelda"},
-]
+# Load a dataset to deduplicate
+texts = load_dataset("ag_news", split="train")["text"]
 
-# Deduplicate the records
-deduplicated_records = semhash.fit_deduplicate(records=records, threshold=0.5)
+# Deduplicate the texts
+deduplicated_texts = semhash.fit_deduplicate(records=texts)
+```
+
+Any encoder can be used that adheres to our [encoder protocol](https://github.com/MinishLab/semhash/blob/main/semhash/utils.py). For example, any [sentence-transformers](https://github.com/UKPLab/sentence-transformers) model can be used as an encoder:
+
+```python
+from datasets import load_dataset
+from semhash import SemHash
+from sentence_transformers import SentenceTransformer
+
+# Load a sentence-transformers model
+model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+
+# Initialize a SemHash with the model and custom encoder
+semhash = SemHash(model=model)
+
+# Load a dataset to deduplicate
+texts = load_dataset("ag_news", split="train")["text"]
+
+# Deduplicate the texts
+deduplicated_texts = semhash.fit_deduplicate(records=texts)
 ```
 
 </details>
@@ -176,6 +213,7 @@ deduplicated_records = semhash.fit_deduplicate(records=records, threshold=0.5)
 We've benchmarked SemHash on a variety of datasets to measure the deduplication performance and speed. The benchmarks were run with the following setup:
 - The benchmarks were all run on CPU
 - The benchmarks were all run with `ann=True`
+- The used encoder is the default encoder ([potion-base-8M](https://huggingface.co/minishlab/potion-base-8M)).
 - The timings include the encoding time, index building time, and deduplication time.
 
 ### Train Deduplication Benchmark
