@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-from typing import Sequence, TypeVar
+from typing import Sequence
 
 import numpy as np
 from model2vec import StaticModel
 from vicinity import Backend, Vicinity
 
+from semhash.datamodels import DeduplicationResult, DuplicateRecord, Record
 from semhash.utils import Encoder
-
-Record = TypeVar("Record", str, dict[str, str])
 
 
 class SemHash:
@@ -74,21 +73,39 @@ class SemHash:
         # Record is a string
         return record.replace("\t", " ")
 
-    def _remove_exact_duplicates(self, records: Sequence[Record]) -> list[Record]:
+    def _remove_exact_duplicates(
+        self, records: Sequence[Record], reference_records: list[str] | None = None
+    ) -> tuple[list[Record], list[Record]]:
         """
         Remove exact duplicates based on the unpacked string representation of each record.
 
-        :param records: A list of records.
-        :return: A list of deduplicated records.
+        If reference_records is None, the function will only check for duplicates within the records list.
+
+        :param records: A list of records to check for exact duplicates.
+        :param reference_records: A list of records to compare against. These are already unpacked
+        :return: A list of deduplicated records and a list of duplicates.
         """
-        seen = set()
         deduplicated = []
+        duplicates = []
+        seen = set()
+        in_one_set = True
+        if reference_records is not None:
+            # If the reference records are provided, we need to add them to the seen set
+            # to deduplicate within the reference set
+            seen = set(reference_records)
+            in_one_set = False
+
         for record in records:
-            unpacked = self._unpack_record(record)
-            if unpacked not in seen:
-                seen.add(unpacked)
+            unpacked_record = self._unpack_record(record)
+            if unpacked_record not in seen:
                 deduplicated.append(record)
-        return deduplicated
+                # Only add current documents to seen if we don't have a reference set.
+                if in_one_set:
+                    seen.add(unpacked_record)
+            else:
+                duplicates.append(record)
+
+        return deduplicated, duplicates
 
     def fit(self, records: Sequence[Record]) -> SemHash:
         """
@@ -107,27 +124,27 @@ class SemHash:
         :param records: The dataset to fit on. Can be a list of dictionaries or a list of strings.
         :return: The embeddings of the records.
         """
-        return self._sub_fit(records)
+        return self._sub_fit(records)[0]
 
-    def _sub_fit(self, records: Sequence[Record]) -> np.ndarray:
+    def _sub_fit(self, records: Sequence[Record]) -> tuple[np.ndarray, list[Record], list[Record]]:
         if self.columns is None and isinstance(records[0], dict):
             raise ValueError("Columns must be specified when passing dictionaries.")
 
         # Remove exact duplicates before embedding
-        records = self._remove_exact_duplicates(records)
+        records, exact_duplicates = self._remove_exact_duplicates(records)
 
         # Compute embeddings for the records and unpack the records
         embeddings = self._featurize(records)
         items = [self._unpack_record(record) for record in records]
         # Fit the index
         self.vicinity = Vicinity.from_vectors_and_items(vectors=embeddings, items=items, backend_type=self.backend)
-        return embeddings
+        return embeddings, records, exact_duplicates
 
     def deduplicate(
         self,
         records: Sequence[Record],
         threshold: float = 0.9,
-    ) -> Sequence[Record]:
+    ) -> DeduplicationResult:
         """
         Perform deduplication against the fitted index.
 
@@ -143,26 +160,39 @@ class SemHash:
         if self.vicinity is None:
             raise ValueError("No fitted index found. Call semhash.fit(records) before calling deduplicate.")
 
+        # Remove exact duplicates before embedding
+        records, exact_duplicates = self._remove_exact_duplicates(records, self.vicinity.items)
+        duplicate_records = [DuplicateRecord(record=record, duplicates=[], exact=True) for record in exact_duplicates]
+
+        # If no records are left after removing exact duplicates, return early
+        if not records:
+            return DeduplicationResult(deduplicated=[], duplicates=duplicate_records)
+
         # Compute embeddings for the new records
         embeddings = self._featurize(records)
-
         # Query the fitted index
         results = self.vicinity.query_threshold(embeddings, threshold=1 - threshold)
 
-        # Keep only those records for which no similar item was found
         deduplicated_records = []
         for record, similar_items in zip(records, results):
             if not similar_items:
                 # No duplicates found, keep this record
                 deduplicated_records.append(record)
+            else:
+                duplicates: list[Record]
+                if self.columns is not None:
+                    duplicates = [dict(zip(self.columns, duplicate.split("\t"))) for duplicate in similar_items]  # type: ignore
+                else:
+                    duplicates = similar_items  # type: ignore
+                duplicate_records.append(DuplicateRecord(record=record, duplicates=duplicates, exact=False))
 
-        return deduplicated_records
+        return DeduplicationResult(deduplicated=deduplicated_records, duplicates=duplicate_records)
 
     def fit_deduplicate(
         self,
         records: Sequence[Record],
         threshold: float = 0.9,
-    ) -> Sequence[Record]:
+    ) -> DeduplicationResult:
         """
         Fit and deduplicate a single dataset.
 
@@ -172,10 +202,13 @@ class SemHash:
         :param threshold: Similarity threshold for deduplication.
         :return: A deduplicated list of records.
         """
-        # Remove exact duplicates before embedding
-        records = self._remove_exact_duplicates(records)
         # Create embeddings and fit the index
-        embeddings = self.fit_transform(records)
+        embeddings, records, exact_duplicates = self._sub_fit(records)
+        duplicate_records = [DuplicateRecord(record=record, duplicates=[], exact=True) for record in exact_duplicates]
+
+        # If no records are left after removing exact duplicates, return early
+        if not records:
+            return DeduplicationResult(deduplicated=[], duplicates=duplicate_records)
 
         # Get similar items for each record
         results = self.vicinity.query_threshold(embeddings, threshold=1 - threshold)  # type: ignore
@@ -186,10 +219,15 @@ class SemHash:
             # similar_items includes 'record' itself
             # If we've seen any of these items before, this is a duplicate cluster.
             if any(item in seen_items for item in similar_items):
+                record_unpacked = self._unpack_record(record)
+                duplicates = list(set(similar_items) - {record_unpacked})
+                if self.columns is not None:
+                    duplicates = [dict(zip(self.columns, duplicate.split("\t"))) for duplicate in duplicates]
+                duplicate_records.append(DuplicateRecord(record=record, duplicates=duplicates, exact=False))
                 continue
             # This is the first time we see this cluster of similar items
             deduplicated_records.append(record)
             # Mark all items in this cluster as seen
             seen_items.update(similar_items)
 
-        return deduplicated_records
+        return DeduplicationResult(deduplicated=deduplicated_records, duplicates=duplicate_records)
