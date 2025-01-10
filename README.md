@@ -1,7 +1,15 @@
 
+
+<div align="center">
+    <picture>
+      <img width="30%" alt="SemHash logo" src="assets/images/semhash_logo.png">
+    </picture>
+  </a>
+</div>
+
 <div align="center">
 
-# SemHash: Fast Semantic Text Deduplication
+# Fast Semantic Text Deduplication
 
 
   <h2>
@@ -22,7 +30,9 @@
 </div>
 
 
-SemHash is a technique to efficiently deduplicate datasets based on semantic similarity. It uses a combination of lightning-fast embeddings through [model2vec](https://github.com/MinishLab/model2vec) and ANN-based similarity search through [vicinity](https://github.com/MinishLab/vicinity).
+SemHash is a lightweight and flexible tool for deduplicating datasets using semantic similarity. It combines fast embedding generation from [Model2Vec](https://github.com/MinishLab/model2vec) with efficient ANN-based similarity search through [Vicinity](https://github.com/MinishLab/vicinity).
+
+SemHash supports both single-dataset deduplication (e.g., cleaning up a train set) and multi-dataset deduplication (e.g., ensuring no overlap between a test set and a train set). It works with simple datasets, such as text lists, and more complex ones, like multi-column QA datasets. Additionally, it includes functions to inspect deduplication results, making it easier to understand and refine your data cleaning process.
 
 ## Quickstart
 
@@ -31,7 +41,7 @@ Install the package with:
 pip install semhash
 ```
 
-Deduplicate a single dataset with the following code (note: this example assumes you have `datasets` installed, which you can install with `pip install datasets`):
+Deduplicate a single dataset with the following code (note: the examples assume you have `datasets` installed, which you can install with `pip install datasets`):
 
 ```python
 from datasets import load_dataset
@@ -44,17 +54,7 @@ texts = load_dataset("ag_news", split="train")["text"]
 semhash = SemHash.from_records(records=texts)
 
 # Deduplicate the texts
-result = semhash.self_deduplicate()
-
-# Check the texts
-result.deduplicated
-# Check the duplicates
-result.duplicates
-# See how many texts were duplicates
-result.duplicate_ratio
-# See how many were exact duplicates
-result.exact_duplicate_ratio
-
+deduplicated_texts = semhash.self_deduplicate().deduplicated
 ```
 
 Or, deduplicate across two datasets with the following code (e.g., eliminating train/test leakage):
@@ -74,45 +74,30 @@ semhash = SemHash.from_records(records=train_texts)
 deduplicated_test_texts = semhash.deduplicate(records=test_texts).deduplicated
 ```
 
-As seen above, the `deduplicate` and `self_deduplicate` functions return a `DeduplicationResult`. This object stores the deduplicated corpus, and a set of duplicate objects, along with the objects that caused duplication. For example:
+Or, deduplicate multi-column datasets with the following code (e.g., deduplicating a QA dataset):
 
 ```python
 from datasets import load_dataset
 from semhash import SemHash
 
-# Load a dataset to deduplicate
-texts = load_dataset("ag_news", split="train")["text"]
+# Load the dataset
+dataset = load_dataset("squad_v2", split="train")
 
-# Initialize a SemHash instance
-semhash = SemHash.from_records(records=texts)
+# Convert the dataset to a list of dictionaries
+records = [dict(row) for row in dataset]
 
-# Deduplicate the texts
-result = semhash.self_deduplicate(records=texts, threshold=0.99)
+# Initialize SemHash with the columns to deduplicate
+semhash = SemHash.from_records(records=records, columns=["question", "context"])
 
-for duplicate in result.duplicates:
-  print("RECORD:")
-  print(duplicate.record)
-  if duplicate.exact:
-    print("Exact match!")
-  else:
-    print("DUPLICATES:")
-    for corpus_duplicate in duplicate.duplicates:
-      print(corpus_duplicate)
-  print("-" * 25)
-
+# Deduplicate the records
+deduplicated_records = semhash.self_deduplicate().deduplicated
 ```
 
-For more advanced usage, you can also deduplicate across multiple datasets, or deduplicate multi-column datasets. Examples are provided in the [usage](#usage) section.
-
-NOTE: By default, we use the ANN (approximate-nearest neighbors) backend for deduplication. We recommend keeping this since the recall for smaller datasets is ~100%, and it's needed for larger datasets (>1M samples) since these will take too long to deduplicate without ANN. If you want to use the flat/exact-matching backend, you can set `use_ann=False` in the SemHash constructor:
-
-```python
-semhash = SemHash.from_records(records=texts, use_ann=False)
-```
+The `deduplicate` and `self_deduplicate` functions return a [DeduplicationResult](https://github.com/MinishLab/semhash/blob/prepare-release/semhash/datamodels.py#L35). This object stores the deduplicated corpus, a set of duplicate objec (along with the objects that caused duplication), and several useful functions to further inspect the deduplication result. Examples of how these functions can be used can be found in the [usage](#usage) section.
 
 ## Main Features
 
-- **Fast**: SemHash uses model2vec to embed texts and vicinity to perform similarity search, making it extremely fast.
+- **Fast**: SemHash uses [model2vec](https://github.com/MinishLab/model2vec) to embed texts and [vicinity](https://github.com/MinishLab/vicinity) to perform similarity search, making it extremely fast.
 - **Scalable**: SemHash can deduplicate large datasets with millions of records thanks to the ANN backends in Vicinity.
 - **Flexible**: SemHash can be used to deduplicate a single dataset or across two datasets, and can also be used to deduplicate multi-column datasets (such as QA datasets).
 - **Lightweight**: SemHash is a lightweight package with minimal dependencies, making it easy to install and use.
@@ -182,16 +167,50 @@ from semhash import SemHash
 dataset = load_dataset("squad_v2", split="train")
 
 # Convert the dataset to a list of dictionaries
-records = [
-    {"context": row["context"], "question": row["question"], "answers": str(row["answers"])}
-    for row in dataset
-]
+records = [dict(row) for row in dataset]
 
 # Initialize SemHash with the columns to deduplicate
-semhash = SemHash.from_records(records=records, columns=["question", "context", "answers"])
+semhash = SemHash.from_records(records=records, columns=["question", "context"])
 
 # Deduplicate the records
-deduplicated_records = semhash.self_deduplicate()
+deduplicated_records = semhash.self_deduplicate().deduplicated
+```
+
+</details>
+
+<details>
+<summary>  DeduplicationResult functionality </summary>
+<br>
+
+The `DeduplicationResult` object returned by the `deduplicate` and `self_deduplicate` functions contains several useful functions to inspect the deduplication result. The following code snippet shows how to use these functions:
+
+```python
+from datasets import load_dataset
+from semhash import SemHash
+
+# Load a dataset to deduplicate
+texts = load_dataset("ag_news", split="train")["text"]
+
+# Initialize a SemHash instance
+semhash = SemHash.from_records(records=texts)
+
+# Deduplicate the texts
+deduplication_result = semhash.self_deduplicate()
+
+# Check the deduplicated texts
+deduplication_result.deduplicated
+# Check the duplicates
+deduplication_result.duplicates
+# See what percentage of the texts were duplicates
+deduplication_result.duplicate_ratio
+# See what percentage of the texts were exact duplicates
+deduplication_result.exact_duplicate_ratio
+
+# Get the least similar text from the duplicates. This is useful for finding the right threshold for deduplication.
+least_similar = deduplication_result.get_least_similar_from_duplicates()
+
+# Rethreshold the duplicates. This allows you to instantly rethreshold the duplicates with a new threshold without having to re-deduplicate the texts.
+deduplication_result.rethreshold(0.95)
 ```
 
 </details>
@@ -242,6 +261,12 @@ deduplicated_texts = semhash.self_deduplicate()
 
 </details>
 
+NOTE: By default, we use the ANN (approximate-nearest neighbors) backend for deduplication. We recommend keeping this since the recall for smaller datasets is ~100%, and it's needed for larger datasets (>1M samples) since these will take too long to deduplicate without ANN. If you want to use the flat/exact-matching backend, you can set `use_ann=False` in the SemHash constructor:
+
+```python
+semhash = SemHash.from_records(records=texts, use_ann=False)
+```
+
 ## Benchmarks
 
 We've benchmarked SemHash on a variety of datasets to measure the deduplication performance and speed. The benchmarks were run with the following setup:
@@ -249,58 +274,57 @@ We've benchmarked SemHash on a variety of datasets to measure the deduplication 
 - The benchmarks were all run with `use_ann=True`
 - The used encoder is the default encoder ([potion-base-8M](https://huggingface.co/minishlab/potion-base-8M)).
 - The timings include the encoding time, index building time, and deduplication time.
-
 ### Train Deduplication Benchmark
 
-| Dataset | Original Train Size | Deduplicated Train Size | % Removed | Deduplication Time (s) |
-| --- | --- | --- | --- | --- |
-| bbc | 1225 | 1144 | 6.61 | 0.23 |
-| senteval_cr | 3012 | 2990 | 0.73 | 0.13 |
-| tweet_sentiment_extraction | 27481 | 26695 | 2.86 | 1.64 |
-| emotion | 16000 | 15696 | 1.90 | 0.66 |
-| amazon_counterfactual | 5000 | 4992 | 0.16 | 0.31 |
-| ag_news | 120000 | 106921 | 10.90 | 4.21 |
-| enron_spam | 31716 | 20539 | 35.24 | 1.57 |
-| subj | 8000 | 7990 | 0.12 | 0.57 |
-| sst5 | 8544 | 8526 | 0.21 | 0.55 |
-| 20_newgroups | 11314 | 10685 | 5.56 | 0.69 |
-| hatespeech_offensive | 22783 | 22090 | 3.04 | 0.84 |
-| ade | 17637 | 15718 | 10.88 | 0.68 |
-| imdb | 25000 | 24832 | 0.67 | 1.65 |
-| massive_scenario | 11514 | 9366 | 18.66 | 0.43 |
-| student | 117519 | 63865 | 45.66 | 4.18 |
-| squad_v2 | 130319 | 115546 | 11.34 | 11.20 |
-| wikitext | 1801350 | 884586 | 50.89 | 56.11 |
+| Dataset              |  Original Train Size |  Deduplicated Train Size |  % Removed |   Deduplication Time (s) |
+|----------------------|----------------------|--------------------------|------------|--------------------------|
+| bbc                  |                 1225 |                     1144 |       6.61 |                     0.57 |
+| senteval_cr          |                 3012 |                     2990 |       0.73 |                     0.14 |
+| tweet_sentiment_extraction |                27481 |                    26695 |       2.86 |                     1.77 |
+| emotion              |                16000 |                    15695 |       1.91 |                     0.77 |
+| amazon_counterfactual |                 5000 |                     4992 |       0.16 |                     0.33 |
+| ag_news              |               120000 |                   106921 |      10.90 |                     5.20 |
+| enron_spam           |                31716 |                    20540 |      35.24 |                     2.03 |
+| subj                 |                 8000 |                     7990 |       0.12 |                     0.63 |
+| sst5                 |                 8544 |                     8526 |       0.21 |                     0.58 |
+| 20_newgroups         |                11314 |                    10684 |       5.57 |                     0.73 |
+| hatespeech_offensive |                22783 |                    22090 |       3.04 |                     0.92 |
+| ade                  |                17637 |                    15718 |      10.88 |                     0.73 |
+| imdb                 |                25000 |                    24830 |       0.68 |                     1.76 |
+| massive_scenario     |                11514 |                     9366 |      18.66 |                     0.47 |
+| student              |               117519 |                    63856 |      45.66 |                     8.80 |
+| squad_v2             |               130319 |                   109698 |      15.82 |                     8.81 |
+| wikitext             |              1801350 |                   884645 |      50.89 |                    83.53 |
 
 
 ### Train/Test Deduplication Benchmark
 
-| Dataset | Train Size | Test Size | Deduplicated Test Size | % Removed | Deduplication Time (s) |
-| --- | --- | --- | --- | --- | --- |
-| bbc | 1225 | 1000 | 875 | 12.50 | 0.39 |
-| senteval_cr | 3012 | 753 | 750 | 0.40 | 0.11 |
-| tweet_sentiment_extraction | 27481 | 3534 | 3411 | 3.48 | 0.86 |
-| emotion | 16000 | 2000 | 1926 | 3.70 | 0.56 |
-| amazon_counterfactual | 5000 | 5000 | 4990 | 0.20 | 0.48 |
-| ag_news | 120000 | 7600 | 6197 | 18.46 | 3.38 |
-| enron_spam | 31716 | 2000 | 1063 | 46.85 | 1.98 |
-| subj | 8000 | 2000 | 1999 | 0.05 | 0.58 |
-| sst5 | 8544 | 2210 | 2205 | 0.23 | 0.56 |
-| 20_newgroups | 11314 | 7532 | 7310 | 2.95 | 2.26 |
-| hatespeech_offensive | 22783 | 2000 | 1926 | 3.70 | 0.72 |
-| ade | 17637 | 5879 | 4954 | 15.73 | 0.82 |
-| imdb | 25000 | 25000 | 24805 | 0.78 | 2.65 |
-| massive_scenario | 11514 | 2974 | 2188 | 26.43 | 0.43 |
-| student | 117519 | 5000 | 2395 | 52.10 | 3.02 |
-| squad_v2 | 130319 | 11873 | 11869 | 0.03 | 9.11 |
-| wikitext | 1801350 | 4358 | 3610 | 17.16 | 36.10 |
+| Dataset              |   Train Size |    Test Size |   Deduplicated Test Size |  % Removed |   Deduplication Time (s) |
+|----------------------|--------------|--------------|--------------------------|------------|--------------------------|
+| bbc                  |         1225 |         1000 |                      870 |      13.00 |                     0.71 |
+| senteval_cr          |         3012 |          753 |                      750 |       0.40 |                     0.13 |
+| tweet_sentiment_extraction |        27481 |         3534 |                     3412 |       3.45 |                     1.53 |
+| emotion              |        16000 |         2000 |                     1926 |       3.70 |                     0.65 |
+| amazon_counterfactual |         5000 |         5000 |                     4990 |       0.20 |                     0.51 |
+| ag_news              |       120000 |         7600 |                     6198 |      18.45 |                     3.74 |
+| enron_spam           |        31716 |         2000 |                     1060 |      47.00 |                     1.94 |
+| subj                 |         8000 |         2000 |                     1999 |       0.05 |                     0.62 |
+| sst5                 |         8544 |         2210 |                     2205 |       0.23 |                     0.59 |
+| 20_newgroups         |        11314 |         7532 |                     7098 |       5.76 |                     2.25 |
+| hatespeech_offensive |        22783 |         2000 |                     1925 |       3.75 |                     0.77 |
+| ade                  |        17637 |         5879 |                     4952 |      15.77 |                     0.81 |
+| imdb                 |        25000 |        25000 |                    24795 |       0.82 |                     2.81 |
+| massive_scenario     |        11514 |         2974 |                     2190 |      26.36 |                     0.46 |
+| student              |       117519 |         5000 |                     2393 |      52.14 |                     3.78 |
+| squad_v2             |       130319 |        11873 |                    11863 |       0.08 |                     7.13 |
+| wikitext             |      1801350 |         4358 |                     2139 |      50.92 |                    40.32 |
 
 
 As can be seen, SemHash is extremely fast, and scales to large datasets with millions of records. There are some notable examples of train/test leakage, such as `enron_spam` and `student`, where the test dataset contains a significant amount of semantic overlap with the training dataset.
 
 ### Reproducing the Benchmarks
 
-To run the benchmarks yourself, you can use the following command:
+To run the benchmarks yourself, you can use the following command (assuming you have the `datasets` library installed):
 
 ```bash
 python -m benchmarks.run_benchmarks
