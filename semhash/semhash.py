@@ -88,8 +88,6 @@ class SemHash(Generic[Record]):
             record["score"] = np.prod(scaled_scores) if scaled_scores else 0
 
         records.sort(key=lambda x: x["score"], reverse=True)
-        for record in records:
-            record.pop("score", None)
         return records
 
     @classmethod
@@ -170,6 +168,10 @@ class SemHash(Generic[Record]):
         # Remove exact duplicates
         deduplicated_records, duplicates = cls._remove_exact_duplicates(dict_records, columns)
 
+        # sort records by score if score_columns are provided
+        if score_columns is not None:
+            deduplicated_records = cls._score(deduplicated_records, score_columns)
+
         duplicate_map = defaultdict(list)
         for x in duplicates:
             frozen_record = to_frozendict(x, set(columns))
@@ -181,10 +183,6 @@ class SemHash(Generic[Record]):
             frozen_record = to_frozendict(record, set(columns))
             i.extend(duplicate_map[frozen_record])
             items.append(i)
-
-        # sort records by score if score_columns are provided
-        if score_columns is not None:
-            deduplicated_records = cls._score(deduplicated_records, score_columns)
 
         # Create embeddings and unpack records
         embeddings = cls._featurize(deduplicated_records, columns, model)
