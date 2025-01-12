@@ -62,7 +62,7 @@ class SemHash(Generic[Record]):
         return np.concatenate(embeddings_per_col, axis=1)
 
     @staticmethod
-    def _score(records: list[dict[str, str]], score_columns: Sequence[str]) -> list[dict[str, str]]:
+    def _sort_and_scale_scores(records: list[dict[str, str]], score_columns: Sequence[str]) -> list[dict[str, str]]:
         """Score the records by scaling each column between 0 and 1 and taking the product."""
         # First collect all scores for each column
         scores_by_column = {}
@@ -170,7 +170,7 @@ class SemHash(Generic[Record]):
 
         # sort records by score if score_columns are provided
         if score_columns is not None:
-            deduplicated_records = cls._score(deduplicated_records, score_columns)
+            deduplicated_records = cls._calculate_scores(deduplicated_records, score_columns)
 
         duplicate_map = defaultdict(list)
         for x in duplicates:
