@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from typing import List
+
 import numpy as np
 from vicinity import Backend
 from vicinity.backends import AbstractBackend, get_backend_class
+from vicinity.datatypes import SingleQueryResult
 
 DocScore = tuple[dict[str, str], float]
 DocScores = list[DocScore]
@@ -66,33 +69,12 @@ class Index:
 
         return out
 
-    def compute_nearest_neighbor_alignment_scores(self) -> np.ndarray:
+    def query_top_k(self, vectors: np.ndarray, top_k: int) -> List[SingleQueryResult]:
         """
-        Compute embedding similarity based on nearest neighbor alignment.
+        Query the index with a top-k threshold.
 
-        For each vector, finds its k nearest neighbors and computes the average similarity
-        to determine how well-aligned it is with other vectors in the embedding space.
+        :param vectors: The vectors to query.
+        :param top_k: Number of top-k records to keep.
+        :return: The query results.
         """
-        # Get scores for each vector
-        scores = []
-        for item, vector in zip(self.items, self.vectors):
-            results = self.query_threshold(vector, 0)[0][1:]
-            result_scores = [result[-1] for result in results if result[-1] != 1]
-            score = 0 if not result_scores else np.mean(result_scores)
-            for record in item:
-                record["semhash_score"] = score
-            scores.append(score)
-
-        # Sort the vectors based on the scores
-        alignment_scores = np.array(scores)
-        sorted_indices = np.argsort(alignment_scores)[::-1]  # Sort in descending order
-
-        # Reorder vectors and items based on sorted indices
-        self.vectors = np.array([self.vectors[i] for i in sorted_indices])
-        self.items = [self.items[i] for i in sorted_indices]
-        return alignment_scores
-
-    # def scale_and_sort_on_nearest_neighbor_alignment(self) -> np.ndarray:
-    #     """Sort the items on nearest neighbor alignment."""
-    #     alignment_scores = self._sort_on_nearest_neighbor_alignment()
-    #     return alignment_scores
+        return self.backend.query(vectors, k=top_k + 1)

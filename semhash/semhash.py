@@ -1,32 +1,27 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Callable, Generic, Optional, Sequence, Union
+from re import T
+from typing import Generic, Optional, Sequence, Union
 
 import numpy as np
 from frozendict import frozendict
 from model2vec import StaticModel
 from vicinity import Backend
 
-from semhash.datamodels import DeduplicationResult, DuplicateRecord, Record
+from semhash.datamodels import DeduplicationResult, DuplicateRecord, FilterResult, Record
 from semhash.index import Index
 from semhash.records import map_deduplication_result_to_strings, to_frozendict
 from semhash.utils import Encoder
 
 
 class SemHash(Generic[Record]):
-    def __init__(
-        self,
-        index: Index,
-        model: Encoder,
-        columns: Sequence[str],
-        was_string: bool,
-    ) -> None:
+    def __init__(self, index: Index, model: Encoder, columns: Sequence[str], was_string: bool) -> None:
         """
         Initialize SemHash.
 
         :param index: An index.
-        :param model: A model to use for featurerization.
+        :param model: A model to use for featurization.
         :param columns: Columns of the records.
         :param was_string: Whether the records were strings. Used for mapping back to strings.
         """
@@ -57,35 +52,6 @@ class SemHash(Generic[Record]):
             embeddings_per_col.append(np.asarray(col_emb))
 
         return np.concatenate(embeddings_per_col, axis=1)
-
-    @staticmethod
-    def _sort_and_scale_scores(records: list[dict[str, str]], score_columns: Sequence[str]) -> list[dict[str, str]]:
-        """Score the records by scaling each column between 0 and 1 and taking the product."""
-        # First collect all scores for each column
-        scores_by_column = {}
-        for column in score_columns:
-            scores = [record[column] for record in records if isinstance(record[column], (float, int))]
-            if scores:
-                min_score = min(scores)
-                max_score = max(scores)
-                score_range = max_score - min_score
-                # Store min/max for scaling
-                scores_by_column[column] = (min_score, score_range)
-
-        # Scale and multiply scores for each record
-        for record in records:
-            scaled_scores = []
-            for column, (min_score, score_range) in scores_by_column.items():
-                if isinstance(record[column], (float, int)):
-                    if score_range == 0:
-                        scaled_score = 1.0  # All scores identical
-                    else:
-                        scaled_score = (record[column] - min_score) / score_range
-                    scaled_scores.append(scaled_score)
-            record["score"] = np.prod(scaled_scores) if scaled_scores else 0
-
-        records.sort(key=lambda x: x["score"], reverse=True)
-        return records
 
     @classmethod
     def _remove_exact_duplicates(
@@ -131,7 +97,6 @@ class SemHash(Generic[Record]):
         columns: Sequence[str] | None = None,
         use_ann: bool = True,
         model: Encoder | None = None,
-        score: bool = False,
     ) -> SemHash:
         """
         Initialize a SemHash instance from records.
@@ -142,7 +107,6 @@ class SemHash(Generic[Record]):
         :param columns: Columns to featurize if records are dictionaries.
         :param use_ann: Whether to use approximate nearest neighbors (True) or basic search (False). Default is True.
         :param model: (Optional) An Encoder model. If None, the default model is used (minishlab/potion-base-8M).
-        :param score: (Optional) Whether to score the records.
         :return: A SemHash instance with a fitted vicinity index.
         :raises ValueError: If columns are not provided for dictionary records.
         """
@@ -188,16 +152,12 @@ class SemHash(Generic[Record]):
             backend_type=backend,
         )
 
-        if score:
-            index.compute_nearest_neighbor_alignment_scores()
-
         return cls(index=index, columns=columns, model=model, was_string=was_string)
 
     def deduplicate(
         self,
         records: Sequence[Record],
         threshold: float = 0.9,
-        budget: Optional[Union[int, float]] = None,
     ) -> DeduplicationResult:
         """
         Perform deduplication against the fitted index.
@@ -208,7 +168,6 @@ class SemHash(Generic[Record]):
 
         :param records: A new set of records (e.g., test set) to deduplicate against the fitted dataset.
         :param threshold: Similarity threshold for deduplication.
-        :param budget: The maximum number of records to include after filtering by score.
         :return: A deduplicated list of records.
         :raises: ValueError if passed records are strings and the original records were not strings.
         """
@@ -230,10 +189,6 @@ class SemHash(Generic[Record]):
         if not dict_records:
             return DeduplicationResult(deduplicated=[], duplicates=duplicate_records, threshold=threshold)
 
-        # Set maximum budget if scoring is enabled
-        if budget is None:
-            budget = float("inf")
-
         # Compute embeddings for the new records
         embeddings = self._featurize(records=dict_records, columns=self.columns, model=self.model)
         # Query the fitted index
@@ -241,7 +196,7 @@ class SemHash(Generic[Record]):
 
         deduplicated_records = []
         for record, similar_items in zip(dict_records, results):
-            if not similar_items and len(deduplicated_records) < budget:
+            if not similar_items:
                 # No duplicates found, keep this record
                 deduplicated_records.append(record)
             else:
@@ -266,19 +221,13 @@ class SemHash(Generic[Record]):
     def self_deduplicate(
         self,
         threshold: float = 0.9,
-        budget: Optional[Union[int, float]] = None,
     ) -> DeduplicationResult:
         """
         Deduplicate within the same dataset. This can be used to remove duplicates from a single dataset.
 
         :param threshold: Similarity threshold for deduplication.
-        :param budget: The maximum number of records to include after filtering by score.
         :return: A deduplicated list of records.
         """
-        # Set maximum budget if scoring is enabled
-        if budget is None:
-            budget = float("inf")
-
         # Query the fitted index
         results = self.index.query_threshold(self.index.vectors, threshold=threshold)
         column_set = set(self.columns)
@@ -298,14 +247,10 @@ class SemHash(Generic[Record]):
             # If we don't see any similar_items, we know the record is not a duplicate.
             # in rare cases, the item itself might not be a duplicate of itself.
             if not similar_items:
-                if len(deduplicated_records) < budget:
-                    deduplicated_records.append(record)
-                else:
-                    duplicate_records.append(DuplicateRecord(record=record, duplicates=[], exact=False))
+                deduplicated_records.append(record)
                 continue
-
             items, _ = zip(*similar_items)
-            frozen_items: list[frozendict[str, str]] = [to_frozendict(item, column_set) for item in items]
+            frozen_items = [to_frozendict(item, column_set) for item in items]
             # similar_items includes 'record' itself
             # If we've seen any of these items before, this is a duplicate cluster.
             if any(item in seen_items for item in frozen_items):
@@ -318,16 +263,7 @@ class SemHash(Generic[Record]):
                 )
                 continue
             # This is the first time we see this cluster of similar items
-            if len(deduplicated_records) < budget:
-                deduplicated_records.append(record)
-            else:
-                duplicate_records.append(
-                    DuplicateRecord(
-                        record=record,
-                        duplicates=[(item, score) for item, score in similar_items if item != record],
-                        exact=False,
-                    )
-                )
+            deduplicated_records.append(record)
             # Mark all items in this cluster as seen
             seen_items.update(frozen_items)
 
@@ -340,3 +276,89 @@ class SemHash(Generic[Record]):
             return map_deduplication_result_to_strings(result, columns=self.columns)
 
         return result
+
+    def _validate_filter_budget(self, budget: Union[int, float], records: Sequence[Record]) -> int:
+        """
+        Validate the filter budget.
+
+        :param budget: The budget to validate.
+        :param records: The records to validate against.
+        :return: The validated budget.
+        """
+        if budget > len(records) or budget < 0:
+            raise ValueError("Budget must be between 0 and the number of records.")
+        if budget > 1:
+            return int(budget)
+        return int(len(records) * budget)
+
+    def filter_by_score(
+        self,
+        records: Sequence[Record],
+        budget: Optional[Union[int, float]] = 0.8,
+        top_k: int = 5,
+        ascending: bool = True,
+    ) -> FilterResult:
+        """
+        Filter records based on their scores.
+
+        :param records: Records to filter.
+        :param budget: Maximum number of records to keep.
+        :param top_k: Number of top-k records to keep.
+        :param ascending: Whether to sort in ascending order, from low distance to high distance.
+        :return: FilterResult containing selected and filtered records.
+        """
+        budget = self._validate_filter_budget(budget, records)
+
+        if isinstance(records[0], str):
+            if not self._was_string:
+                raise ValueError("Records were not originally strings, but you passed strings.")
+            # If records are strings, convert to dictionaries with a single column
+            dict_records = [{"text": record} for record in records]
+        else:
+            dict_records = records
+
+        # Compute embeddings for the new records
+        embeddings = self._featurize(records=dict_records, columns=self.columns, model=self.model)
+
+        # Query the fitted index
+        scores = []
+        results = self.index.query_top_k(embeddings, top_k=top_k)
+        for record, result in zip(dict_records, results):
+            scores.append((record, np.mean(result[-1][-top_k:])))
+
+        scores.sort(key=lambda x: x[1], reverse=not ascending)
+
+        selected = [x[0] for x in scores[:budget]]
+        filtered = [x[0] for x in scores[budget:]]
+
+        return FilterResult(selected=selected, filtered=filtered, scores=scores)
+
+    def self_filter_by_score(
+        self,
+        budget: Optional[Union[int, float]] = None,
+        top_k: int = 5,
+        ascending: bool = True,
+    ) -> FilterResult:
+        """
+        Filter records based on their scores.
+
+        This is similar to filter_by_score, but it filters within the same dataset.
+
+        :param budget: Maximum number of records to keep.
+        :param top_k: Number of top-k records to keep.
+        :param ascending: Whether to sort in ascending order, from low distance to high distance.
+        :return: FilterResult containing selected and filtered records.
+        """
+        budget = self._validate_filter_budget(budget, self.index.items)
+
+        results = self.index.query_top_k(self.index.vectors, top_k=top_k)
+        scores = []
+        for record, result in zip(self.index.items, results):
+            scores.append((record, np.mean(result[-1][-top_k:])))
+
+        scores.sort(key=lambda x: x[1], reverse=not ascending)
+
+        selected = scores[:budget]
+        filtered = scores[budget:]
+
+        return FilterResult(selected=selected, filtered=filtered, scores=scores)
