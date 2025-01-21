@@ -21,7 +21,6 @@ class SemHash(Generic[Record]):
         model: Encoder,
         columns: Sequence[str],
         was_string: bool,
-        score_columns: Optional[Sequence[str]] = None,
     ) -> None:
         """
         Initialize SemHash.
@@ -30,13 +29,11 @@ class SemHash(Generic[Record]):
         :param model: A model to use for featurerization.
         :param columns: Columns of the records.
         :param was_string: Whether the records were strings. Used for mapping back to strings.
-        :param score_columns: Columns to score the records.
         """
         self.index = index
         self.model = model
         self.columns = columns
         self._was_string = was_string
-        self.score_columns = score_columns
 
     @staticmethod
     def _featurize(
@@ -134,7 +131,7 @@ class SemHash(Generic[Record]):
         columns: Sequence[str] | None = None,
         use_ann: bool = True,
         model: Encoder | None = None,
-        score_columns: Optional[Sequence[str]] = None,
+        score: bool = False,
     ) -> SemHash:
         """
         Initialize a SemHash instance from records.
@@ -145,7 +142,7 @@ class SemHash(Generic[Record]):
         :param columns: Columns to featurize if records are dictionaries.
         :param use_ann: Whether to use approximate nearest neighbors (True) or basic search (False). Default is True.
         :param model: (Optional) An Encoder model. If None, the default model is used (minishlab/potion-base-8M).
-        :param score_columns: (Optional) Columns to score the records.
+        :param score: (Optional) Whether to score the records.
         :return: A SemHash instance with a fitted vicinity index.
         :raises ValueError: If columns are not provided for dictionary records.
         """
@@ -167,10 +164,6 @@ class SemHash(Generic[Record]):
 
         # Remove exact duplicates
         deduplicated_records, duplicates = cls._remove_exact_duplicates(dict_records, columns)
-
-        # sort records by score if score_columns are provided
-        if score_columns is not None:
-            deduplicated_records = cls._calculate_scores(deduplicated_records, score_columns)
 
         duplicate_map = defaultdict(list)
         for x in duplicates:
@@ -195,7 +188,10 @@ class SemHash(Generic[Record]):
             backend_type=backend,
         )
 
-        return cls(index=index, columns=columns, model=model, was_string=was_string, score_columns=score_columns)
+        if score:
+            index.compute_nearest_neighbor_alignment_scores()
+
+        return cls(index=index, columns=columns, model=model, was_string=was_string)
 
     def deduplicate(
         self,
@@ -235,12 +231,7 @@ class SemHash(Generic[Record]):
             return DeduplicationResult(deduplicated=[], duplicates=duplicate_records, threshold=threshold)
 
         # Set maximum budget if scoring is enabled
-        if self.score_columns is not None:
-            if budget is None:
-                raise ValueError("Budget must be provided when scoring records.")
-            if isinstance(budget, float):
-                budget = int(budget * len(records))
-        else:
+        if budget is None:
             budget = float("inf")
 
         # Compute embeddings for the new records
@@ -285,12 +276,7 @@ class SemHash(Generic[Record]):
         :return: A deduplicated list of records.
         """
         # Set maximum budget if scoring is enabled
-        if self.score_columns is not None:
-            if budget is None:
-                raise ValueError("Budget must be provided when scoring records.")
-            if isinstance(budget, float):
-                budget = int(budget * len(self.index.items))
-        else:
+        if budget is None:
             budget = float("inf")
 
         # Query the fitted index

@@ -65,3 +65,34 @@ class Index:
             out.append(intermediate)
 
         return out
+
+    def compute_nearest_neighbor_alignment_scores(self) -> np.ndarray:
+        """
+        Compute embedding similarity based on nearest neighbor alignment.
+
+        For each vector, finds its k nearest neighbors and computes the average similarity
+        to determine how well-aligned it is with other vectors in the embedding space.
+        """
+        # Get scores for each vector
+        scores = []
+        for item, vector in zip(self.items, self.vectors):
+            results = self.query_threshold(vector, 0)[0][1:]
+            result_scores = [result[-1] for result in results if result[-1] != 1]
+            score = 0 if not result_scores else np.mean(result_scores)
+            for record in item:
+                record["semhash_score"] = score
+            scores.append(score)
+
+        # Sort the vectors based on the scores
+        alignment_scores = np.array(scores)
+        sorted_indices = np.argsort(alignment_scores)[::-1]  # Sort in descending order
+
+        # Reorder vectors and items based on sorted indices
+        self.vectors = np.array([self.vectors[i] for i in sorted_indices])
+        self.items = [self.items[i] for i in sorted_indices]
+        return alignment_scores
+
+    # def scale_and_sort_on_nearest_neighbor_alignment(self) -> np.ndarray:
+    #     """Sort the items on nearest neighbor alignment."""
+    #     alignment_scores = self._sort_on_nearest_neighbor_alignment()
+    #     return alignment_scores
