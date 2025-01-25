@@ -7,6 +7,7 @@ from typing import Generic, Optional, Sequence, Union
 import numpy as np
 from frozendict import frozendict
 from model2vec import StaticModel
+from scipy.stats import entropy
 from vicinity import Backend
 
 from semhash.datamodels import DeduplicationResult, DuplicateRecord, FilterResult, Record
@@ -291,20 +292,22 @@ class SemHash(Generic[Record]):
             return int(budget)
         return int(len(records) * budget)
 
-    def filter_by_score(
+    def filter_by_entropy(
         self,
         records: Sequence[Record],
-        budget: Optional[Union[int, float]] = 0.8,
-        top_k: int = 5,
-        ascending: bool = True,
+        budget: Optional[Union[int, float]] = 0.9,
+        k: int = 100,
+        descending: bool = True,
     ) -> FilterResult:
         """
-        Filter records based on their scores.
+        Filter records based on their entropy. Entropy is computed based on mean cosine similarity of the top-k records.
 
         :param records: Records to filter.
         :param budget: Maximum number of records to keep.
-        :param top_k: Number of top-k records to keep.
-        :param ascending: Whether to sort in ascending order, from low distance to high distance.
+            If a float is passed, it is interpreted as a percentage of the total number of records.
+        :param k: Maximum number of top-k records to keep.
+        :param descending: Whether to sort in descending order, from high entropy to low entropy.
+            Higher entropy means more diverse records, lower entropy means more similar records.
         :return: FilterResult containing selected and filtered records.
         """
         budget = self._validate_filter_budget(budget, records)
@@ -322,41 +325,44 @@ class SemHash(Generic[Record]):
 
         # Query the fitted index
         scores = []
-        results = self.index.query_top_k(embeddings, top_k=top_k)
-        for record, result in zip(dict_records, results):
-            scores.append((record, np.mean(result[-1][-top_k:])))
 
-        scores.sort(key=lambda x: x[1], reverse=not ascending)
+        for record, vectors in zip(dict_records, embeddings):
+            results = self.index.query_top_k(vectors, k=k)
+            scores.append((record, entropy(results[0][-1])))
+
+        scores.sort(key=lambda x: x[1], reverse=descending)
 
         selected = [x[0] for x in scores[:budget]]
         filtered = [x[0] for x in scores[budget:]]
 
         return FilterResult(selected=selected, filtered=filtered, scores=scores)
 
-    def self_filter_by_score(
+    def self_filter_by_entropy(
         self,
-        budget: Optional[Union[int, float]] = None,
-        top_k: int = 5,
-        ascending: bool = True,
+        budget: Optional[Union[int, float]] = 0.9,
+        k: int = 100,
+        descending: bool = True,
     ) -> FilterResult:
         """
-        Filter records based on their scores.
+        Filter records based on their entropy. Entropy is computed based on mean cosine similarity of the top-k records.
 
-        This is similar to filter_by_score, but it filters within the same dataset.
+        This is similar to filter_by_entropy, but it filters within the same dataset.
 
         :param budget: Maximum number of records to keep.
-        :param top_k: Number of top-k records to keep.
-        :param ascending: Whether to sort in ascending order, from low distance to high distance.
+            If a float is passed, it is interpreted as a percentage of the total number of records.
+        :param k: Maximum number of top-k records to keep.
+        :param descending: Whether to sort in descending order, from high entropy to low entropy.
+            Higher entropy means more diverse records, lower entropy means more similar records.
         :return: FilterResult containing selected and filtered records.
         """
         budget = self._validate_filter_budget(budget, self.index.items)
 
-        results = self.index.query_top_k(self.index.vectors, top_k=top_k)
         scores = []
-        for record, result in zip(self.index.items, results):
-            scores.append((record, np.mean(result[-1][-top_k:])))
+        for record, vectors in zip(self.index.items, self.index.vectors):
+            result = self.index.query_top_k(vectors, k=k)
+            scores.append((record, entropy(result[0][-1])))
 
-        scores.sort(key=lambda x: x[1], reverse=not ascending)
+        scores.sort(key=lambda x: x[1], reverse=descending)
 
         selected = scores[:budget]
         filtered = scores[budget:]

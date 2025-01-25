@@ -69,12 +69,15 @@ class Index:
 
         return out
 
-    def query_top_k(self, vectors: np.ndarray, top_k: int) -> List[SingleQueryResult]:
+    def query_top_k(self, vectors: np.ndarray, k: int) -> List[SingleQueryResult]:
         """
         Query the index with a top-k threshold.
 
         :param vectors: The vectors to query.
-        :param top_k: Number of top-k records to keep.
+        :param k: Maximum number of top-k records to keep.
         :return: The query results.
         """
-        return self.backend.query(vectors, k=top_k + 1)
+        results = []
+        for x, y in self.backend.query(vectors=vectors, k=k + 1):  # include the query vector
+            results.append((x[-k:], (y + 1e-10)[-k:]))  # add a small epsilon to avoid division by zero
+        return results
