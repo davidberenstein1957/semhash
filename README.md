@@ -96,7 +96,7 @@ deduplicated_records = semhash.self_deduplicate().deduplicated
 
 The `deduplicate` and `self_deduplicate` functions return a [DeduplicationResult](https://github.com/MinishLab/semhash/blob/main/semhash/datamodels.py#L30). This object stores the deduplicated corpus, a set of duplicate object (along with the objects that caused duplication), and several useful functions to further inspect the deduplication result.
 
-Besides deduplication, SemHash also supports filtering through the `filter_by_score` and `self_filter_by_score` functions. These functions filter records based on their average distance to the top-k nearest neighbors. This is useful for finding examplars of the dataset and selecting the best
+Besides deduplication, SemHash also supports filtering through the `filter_by_entropy` and `self_filter_by_entropy` functions. These functions filter records based on their average distance to the top-k nearest neighbors. This is useful for finding examplars of the dataset and selecting the best records.
 
 Examples of how these functions can be used can be found in the [usage](#usage) section.
 
