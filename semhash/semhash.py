@@ -7,13 +7,12 @@ from typing import Generic, Optional, Sequence, Union
 import numpy as np
 from frozendict import frozendict
 from model2vec import StaticModel
-from scipy.stats import entropy
 from vicinity import Backend
 
 from semhash.datamodels import DeduplicationResult, DuplicateRecord, FilterResult, Record
 from semhash.index import Index
 from semhash.records import map_deduplication_result_to_strings, to_frozendict
-from semhash.utils import Encoder
+from semhash.utils import Encoder, entropy_from_distances
 
 
 class SemHash(Generic[Record]):
@@ -327,8 +326,8 @@ class SemHash(Generic[Record]):
         scores = []
 
         for record, vectors in zip(dict_records, embeddings):
-            results = self.index.query_top_k(vectors, k=k)
-            scores.append((record, entropy(results[0][-1])))
+            results = self.index.query_top_k(vectors.reshape(1, -1), k=k)
+            scores.append((record, entropy_from_distances(results[0][-1])))
 
         scores.sort(key=lambda x: x[1], reverse=descending)
 
@@ -359,8 +358,8 @@ class SemHash(Generic[Record]):
 
         scores = []
         for record, vectors in zip(self.index.items, self.index.vectors):
-            result = self.index.query_top_k(vectors, k=k)
-            scores.append((record, entropy(result[0][-1])))
+            result = self.index.query_top_k(vectors.reshape(1, -1), k=k)
+            scores.append((record, entropy_from_distances(result[0][-1])))
 
         scores.sort(key=lambda x: x[1], reverse=descending)
 
