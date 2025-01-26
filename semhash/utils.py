@@ -20,9 +20,9 @@ class Encoder(Protocol):
         :param **kwargs: Additional keyword arguments.
         :return: The embeddings of the sentences.
         """
-        ...
+        ...  # pragma: no cover
 
-
+        
 def entropy_from_distances(distances: np.ndarray, base: float = 2) -> float:
     """
     Compute entropy from embedding distances.
