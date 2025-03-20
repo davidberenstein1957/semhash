@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import imp
 from collections import defaultdict
 from re import T
 from typing import Generic, Optional, Sequence, Union
@@ -296,19 +297,54 @@ class SemHash(Generic[Record]):
 
         return result
 
-    def _validate_filter_budget(self, budget: Union[int, float], records: Sequence[Record]) -> int:
+    def _validate_filter_budget(self, budget: Union[int, float], records: Sequence[Record], k: int) -> int:
         """
         Validate the filter budget.
 
         :param budget: The budget to validate.
         :param records: The records to validate against.
+        :param k: The number of top-k records to keep.
         :return: The validated budget.
         """
-        if budget > len(records) or budget < 0:
+        if not (0 <= budget <= len(records)):
             raise ValueError("Budget must be between 0 and the number of records.")
-        if budget > 1:
-            return int(budget)
-        return int(len(records) * budget)
+
+        budget = int(budget) if budget > 1 else int(len(records) * budget)
+
+        if budget < k:
+            raise ValueError("Budget must be greater than the number of top-k records to keep.")
+
+        return budget
+
+    def _filter_by_entropy(
+        self,
+        records: Sequence[Record],
+        vectors: np.ndarray,
+        budget: int,
+        k: int,
+        descending: bool = True,
+    ) -> FilterResult:
+        budget = self._validate_filter_budget(budget=budget, records=records, k=k)
+
+        scores = [
+            (idx, record, entropy_from_distances(results[0][-1]), results[0][0], results[0][-1])
+            for idx, (record, vectors) in enumerate(zip(records, vectors))
+            for results in [self.index.query_top_k(vectors.reshape(1, -1), k=k)]
+        ]
+
+        scores.sort(key=lambda x: x[2], reverse=descending)
+
+        selected, selected_indices = [], set()
+        while len(selected) < budget:
+            for idx, record, _, nearest_neighbor_index, _ in scores:
+                if idx not in selected_indices:
+                    selected.append(record)
+                    selected_indices.add(idx)
+                    if len(selected) >= budget:
+                        break
+
+        filtered = [record for idx, record, _, _, _ in scores if idx not in selected_indices]
+        return FilterResult(selected=selected, filtered=filtered, scores=scores)
 
     def filter_by_entropy(
         self,
@@ -328,32 +364,22 @@ class SemHash(Generic[Record]):
             Higher entropy means more diverse records, lower entropy means more similar records.
         :return: FilterResult containing selected and filtered records.
         """
-        budget = self._validate_filter_budget(budget, records)
-
         if isinstance(records[0], str):
             if not self._was_string:
                 raise ValueError("Records were not originally strings, but you passed strings.")
-            # If records are strings, convert to dictionaries with a single column
             dict_records = [{"text": record} for record in records]
         else:
             dict_records = records
 
-        # Compute embeddings for the new records
         embeddings = self._featurize(records=dict_records, columns=self.columns, model=self.model)
 
-        # Query the fitted index
-        scores = []
-
-        for record, vectors in zip(dict_records, embeddings):
-            results = self.index.query_top_k(vectors.reshape(1, -1), k=k)
-            scores.append((record, entropy_from_distances(results[0][-1])))
-
-        scores.sort(key=lambda x: x[1], reverse=descending)
-
-        selected = [x[0] for x in scores[:budget]]
-        filtered = [x[0] for x in scores[budget:]]
-
-        return FilterResult(selected=selected, filtered=filtered, scores=scores)
+        return self._filter_by_entropy(
+            records=dict_records,
+            vectors=embeddings,
+            budget=budget,
+            k=k,
+            descending=descending,
+        )
 
     def self_filter_by_entropy(
         self,
@@ -373,16 +399,10 @@ class SemHash(Generic[Record]):
             Higher entropy means more diverse records, lower entropy means more similar records.
         :return: FilterResult containing selected and filtered records.
         """
-        budget = self._validate_filter_budget(budget, self.index.items)
-
-        scores = []
-        for record, vectors in zip(self.index.items, self.index.vectors):
-            result = self.index.query_top_k(vectors.reshape(1, -1), k=k)
-            scores.append((record, entropy_from_distances(result[0][-1])))
-
-        scores.sort(key=lambda x: x[1], reverse=descending)
-
-        selected = scores[:budget]
-        filtered = scores[budget:]
-
-        return FilterResult(selected=selected, filtered=filtered, scores=scores)
+        return self._filter_by_entropy(
+            records=self.index.items,
+            vectors=self.index.vectors,
+            budget=budget,
+            k=k,
+            descending=descending,
+        )
