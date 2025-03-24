@@ -22,7 +22,7 @@ class Encoder(Protocol):
         """
         ...  # pragma: no cover
 
-        
+
 def entropy_from_distances(distances: np.ndarray, base: float = 2) -> float:
     """
     Compute entropy from embedding distances.

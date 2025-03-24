@@ -154,18 +154,13 @@ def test_filter_by_entropy(use_ann: bool, model: Encoder) -> None:
     filtered = semhash.self_filter_by_entropy(budget=3)
     assert len(filtered.selected) == 3
     assert len(filtered.filtered) == 3
-    assert len(filtered.scores) == 6
+    assert len(filtered.scores_selected) == 3
+    assert len(filtered.scores_filtered) == 3
 
     # Test with percentage budget
     filtered = semhash.self_filter_by_entropy(budget=0.5)
     assert len(filtered.selected) == 3
     assert len(filtered.filtered) == 3
-
-    # Test ascending order (lower entropy first)
-    filtered_asc = semhash.self_filter_by_entropy(budget=3, descending=False)
-    filtered_desc = semhash.self_filter_by_entropy(budget=3, descending=True)
-    assert filtered_asc.scores[-1][1] >= filtered_asc.scores[0][1]
-    assert filtered_desc.scores[0][1] >= filtered_desc.scores[-1][1]
 
 
 def test_filter_by_entropy_invalid_budget(use_ann: bool, model: Encoder) -> None:

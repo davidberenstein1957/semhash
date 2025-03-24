@@ -3,7 +3,7 @@ from __future__ import annotations
 import imp
 from collections import defaultdict
 from re import T
-from typing import Generic, Optional, Sequence, Union
+from typing import Generic, Sequence, Union
 
 import numpy as np
 from frozendict import frozendict
@@ -175,15 +175,8 @@ class SemHash(Generic[Record]):
         :param records: A new set of records (e.g., test set) to deduplicate against the fitted dataset.
         :param threshold: Similarity threshold for deduplication.
         :return: A deduplicated list of records.
-        :raises: ValueError if passed records are strings and the original records were not strings.
         """
-        if isinstance(records[0], str):
-            if not self._was_string:
-                raise ValueError("Records were not originally strings, but you passed strings.")
-            # If records are strings, convert to dictionaries with a single column
-            dict_records = [{"text": record} for record in records]
-        else:
-            dict_records = records
+        dict_records = self._validate_if_strings(records)
 
         # Remove exact duplicates before embedding
         dict_records, exact_duplicates = self._remove_exact_duplicates(
@@ -297,112 +290,152 @@ class SemHash(Generic[Record]):
 
         return result
 
-    def _validate_filter_budget(self, budget: Union[int, float], records: Sequence[Record], k: int) -> int:
+    def _validate_if_strings(self, records: Sequence[dict[str, str] | str]) -> Sequence[dict[str, str]]:
+        """
+        Validate if the records are strings.
+
+        If the records are strings, they are converted to dictionaries with a single column.
+
+        :param records: The records to validate.
+        :return: The records as a list of dictionaries.
+        :raises ValueError: If the records are strings but were not originally strings.
+        :raises ValueError: If the records are not all strings or dictionaries.
+        """
+        if isinstance(records[0], str):
+            if not self._was_string:
+                raise ValueError("Records were not originally strings, but you passed strings.")
+            dict_records = [{"text": record} for record in records if isinstance(record, str)]
+        else:
+            dict_records = [record for record in records if isinstance(record, dict)]
+        if dict_records != records:
+            raise ValueError("Records must be either strings or dictionaries.")
+        return dict_records
+
+    def _validate_filter_budget(
+        self, budget: float | int | None, records: Sequence[dict[str, str] | str], k: int
+    ) -> int:
         """
         Validate the filter budget.
 
-        :param budget: The budget to validate.
+        :param budget: The budget to validate, either as a percentage (0 to 1) or an absolute number.
         :param records: The records to validate against.
         :param k: The number of top-k records to keep.
-        :return: The validated budget.
+        :return: The validated budget as an integer.
+        :raises ValueError: If the budget is not within the valid range or less than k.
         """
-        if not (0 <= budget <= len(records)):
-            raise ValueError("Budget must be between 0 and the number of records.")
+        if budget is None:
+            budget = 0.9
+
+        if not (0 <= budget <= 1 or 0 <= budget <= len(records)):
+            raise ValueError("Budget must be between 0 and 1 (as a percentage) or between 0 and the number of records.")
 
         budget = int(budget) if budget > 1 else int(len(records) * budget)
 
         if budget < k:
-            raise ValueError("Budget must be greater than the number of top-k records to keep.")
+            raise ValueError("Budget must be greater than or equal to the number of top-k records to keep.")
 
         return budget
 
     def _filter_by_entropy(
         self,
-        records: Sequence[Record],
+        records: Sequence[dict[str, str]],
         vectors: np.ndarray,
-        budget: int,
-        k: int,
+        budget: float | int | None,
         descending: bool = True,
     ) -> FilterResult:
-        budget = self._validate_filter_budget(budget=budget, records=records, k=k)
+        """
+        Filter records based on their entropy scores.
 
+        :param records: The records to filter.
+        :param vectors: The vectors corresponding to the records.
+        :param budget: The maximum number of records to keep.
+        :param descending: Whether to sort in descending order of entropy.
+        :return: A FilterResult containing selected and filtered records.
+        """
+        budget = self._validate_filter_budget(budget=budget, records=records, k=100)
+
+        # compute entropy scores
         scores = [
             (idx, record, entropy_from_distances(results[0][-1]), results[0][0], results[0][-1])
             for idx, (record, vectors) in enumerate(zip(records, vectors))
-            for results in [self.index.query_top_k(vectors.reshape(1, -1), k=k)]
+            for results in [self.index.query_top_k(vectors.reshape(1, -1), k=100)]
         ]
 
+        # sort scores
         scores.sort(key=lambda x: x[2], reverse=descending)
 
-        selected, selected_indices = [], set()
-        while len(selected) < budget:
-            for idx, record, _, nearest_neighbor_index, _ in scores:
-                if idx not in selected_indices:
-                    selected.append(record)
-                    selected_indices.add(idx)
-                    if len(selected) >= budget:
-                        break
+        # select records
+        selected: list[Union[dict[str, str], str]] = []
+        selected_indices: set[int] = set()
+        scores_selected: list[float] = []
+        for idx, record, entropy, _, _ in scores:
+            if len(selected) >= budget:
+                break
+            if idx not in selected_indices:
+                selected.append(record)
+                selected_indices.add(idx)
+                scores_selected.append(entropy)
 
+        # filter records
         filtered = [record for idx, record, _, _, _ in scores if idx not in selected_indices]
-        return FilterResult(selected=selected, filtered=filtered, scores=scores)
+        scores_filtered: list[float] = [entropy for idx, record, entropy, _, _ in scores if idx not in selected_indices]
+
+        return FilterResult(
+            selected=selected,
+            filtered=filtered,
+            scores_selected=scores_selected,
+            scores_filtered=scores_filtered,
+        )
 
     def filter_by_entropy(
         self,
         records: Sequence[Record],
-        budget: Optional[Union[int, float]] = 0.9,
-        k: int = 100,
+        budget: float | int | None = 0.9,
         descending: bool = True,
     ) -> FilterResult:
         """
-        Filter records based on their entropy. Entropy is computed based on mean cosine similarity of the top-k records.
+        Filter records based on their entropy. Entropy is computed based on mean cosine similarity of the top-100 records.
 
         :param records: Records to filter.
         :param budget: Maximum number of records to keep.
             If a float is passed, it is interpreted as a percentage of the total number of records.
-        :param k: Maximum number of top-k records to keep.
         :param descending: Whether to sort in descending order, from high entropy to low entropy.
             Higher entropy means more diverse records, lower entropy means more similar records.
         :return: FilterResult containing selected and filtered records.
         """
-        if isinstance(records[0], str):
-            if not self._was_string:
-                raise ValueError("Records were not originally strings, but you passed strings.")
-            dict_records = [{"text": record} for record in records]
-        else:
-            dict_records = records
+        dict_records = self._validate_if_strings(records)
 
+        # featurize the new records
         embeddings = self._featurize(records=dict_records, columns=self.columns, model=self.model)
 
+        # execute filtering
         return self._filter_by_entropy(
             records=dict_records,
             vectors=embeddings,
             budget=budget,
-            k=k,
             descending=descending,
         )
 
     def self_filter_by_entropy(
         self,
-        budget: Optional[Union[int, float]] = 0.9,
-        k: int = 100,
+        budget: float | int | None = 0.9,
         descending: bool = True,
     ) -> FilterResult:
         """
-        Filter records based on their entropy. Entropy is computed based on mean cosine similarity of the top-k records.
+        Filter records based on their entropy. Entropy is computed based on mean cosine similarity of the top-100 records.
 
         This is similar to filter_by_entropy, but it filters within the same dataset.
 
         :param budget: Maximum number of records to keep.
             If a float is passed, it is interpreted as a percentage of the total number of records.
-        :param k: Maximum number of top-k records to keep.
         :param descending: Whether to sort in descending order, from high entropy to low entropy.
             Higher entropy means more diverse records, lower entropy means more similar records.
         :return: FilterResult containing selected and filtered records.
         """
+        dict_records = [record[0] for record in self.index.items]
         return self._filter_by_entropy(
-            records=self.index.items,
+            records=dict_records,
             vectors=self.index.vectors,
             budget=budget,
-            k=k,
             descending=descending,
         )

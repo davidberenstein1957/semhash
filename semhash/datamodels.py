@@ -95,7 +95,8 @@ class FilterResult(Generic[Record]):
 
     selected: list[Record]
     filtered: list[Record]
-    scores: Optional[dict[Record, float]] = None
+    scores_selected: list[float] = field(default_factory=list)
+    scores_filtered: list[float] = field(default_factory=list)
 
     @property
     def filter_ratio(self) -> float:
@@ -116,7 +117,9 @@ class FilterResult(Generic[Record]):
         :param n: The number of lowest scoring records to return.
         :return: A list of tuples consisting of (record, score).
         """
-        return self.filtered[:n] + self.selected[len(self.selected) - n :]
+        lowest_filtered = [(record, score) for record, score in zip(self.filtered, self.scores_filtered)]
+        lowest_selected = [(record, score) for record, score in zip(self.selected, self.scores_selected)]
+        return lowest_filtered[:n] + lowest_selected[:n]
 
     def get_highest_scoring(self, n: int = 1) -> list[tuple[Record, float]]:
         """
@@ -125,4 +128,6 @@ class FilterResult(Generic[Record]):
         :param n: The number of highest scoring records to return.
         :return: A list of tuples consisting of (record, score).
         """
-        return self.selected[:n] + self.filtered[: len(self.selected) - n]
+        highest_selected = [(record, score) for record, score in zip(self.selected, self.scores_selected)]
+        highest_filtered = [(record, score) for record, score in zip(self.filtered, self.scores_filtered)]
+        return highest_selected[:n] + highest_filtered[:n]
