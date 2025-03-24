@@ -307,7 +307,7 @@ class SemHash(Generic[Record]):
             dict_records = [{"text": record} for record in records if isinstance(record, str)]
         else:
             dict_records = [record for record in records if isinstance(record, dict)]
-        if dict_records != records:
+        if len(dict_records) != len(records):
             raise ValueError("Records must be either strings or dictionaries.")
         return dict_records
 
