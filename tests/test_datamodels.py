@@ -79,8 +79,8 @@ def test_rethreshold_deduplication_result() -> None:
         0.8,
     )
     d.rethreshold(0.85)
-    assert d.duplicates == [DuplicateRecord("d", False, [("x", 0.9)])]
-    assert d.deduplicated == ["a", "b", "c", "e"]
+    assert d.filtered == [DuplicateRecord("d", False, [("x", 0.9)])]
+    assert d.selected == ["a", "b", "c", "e"]
 
 
 def test_rethreshold_exception() -> None:

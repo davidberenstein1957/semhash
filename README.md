@@ -61,7 +61,7 @@ texts = load_dataset("ag_news", split="train")["text"]
 semhash = SemHash.from_records(records=texts)
 
 # Deduplicate the texts
-deduplicated_texts = semhash.self_deduplicate().deduplicated
+deduplicated_texts = semhash.self_deduplicate().selected
 ```
 
 Or, deduplicate across two datasets with the following code (e.g., eliminating train/test leakage):
@@ -78,7 +78,7 @@ test_texts = load_dataset("ag_news", split="test")["text"]
 semhash = SemHash.from_records(records=train_texts)
 
 # Deduplicate the test data against the training data, optionally with a specific threshold
-deduplicated_test_texts = semhash.deduplicate(records=test_texts, threshold=0.9).deduplicated
+deduplicated_test_texts = semhash.deduplicate(records=test_texts, threshold=0.9).selected
 ```
 
 Or, deduplicate multi-column datasets with the following code (e.g., deduplicating a QA dataset):
@@ -97,7 +97,7 @@ records = [dict(row) for row in dataset]
 semhash = SemHash.from_records(records=records, columns=["question", "context"])
 
 # Deduplicate the records
-deduplicated_records = semhash.self_deduplicate().deduplicated
+deduplicated_records = semhash.self_deduplicate().selected
 ```
 
 The `deduplicate` and `self_deduplicate` functions return a [DeduplicationResult](https://github.com/MinishLab/semhash/blob/main/semhash/datamodels.py#L30). This object stores the deduplicated corpus, a set of duplicate object (along with the objects that caused duplication), and several useful functions to further inspect the deduplication result.
@@ -185,7 +185,7 @@ records = [dict(row) for row in dataset]
 semhash = SemHash.from_records(records=records, columns=["question", "context"])
 
 # Deduplicate the records
-deduplicated_records = semhash.self_deduplicate().deduplicated
+deduplicated_records = semhash.self_deduplicate().selected
 ```
 
 </details>
