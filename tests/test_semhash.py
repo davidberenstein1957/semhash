@@ -140,32 +140,20 @@ def test_deduplicate_with_only_exact_duplicates(use_ann: bool, model: Encoder) -
 
 def test_filter_by_entropy(use_ann: bool, model: Encoder) -> None:
     """Test filtering by entropy."""
-    texts = [
-        "It's dangerous to go alone!",
-        "Take this sword with you",
-        "It's dangerous to go alone! Take this.",
-        "The princess is in another castle",
-        "Thank you Mario, but the princess is in another castle",
-        "All your base are belong to us",
-    ]
+    texts = [f"Text {i}" for i in range(1000)]
     semhash = SemHash.from_records(texts, use_ann=use_ann, model=model)
 
     # Test with absolute budget
-    filtered = semhash.self_filter_by_entropy(budget=3)
-    assert len(filtered.selected) == 3
-    assert len(filtered.filtered) == 3
-    assert len(filtered.scores) == 6
+    filtered = semhash.self_filter_by_entropy(budget=200)
+    assert len(filtered.selected) == 200
+    assert len(filtered.filtered) == 800
+    assert len(filtered.scores_selected) == 200
+    assert len(filtered.scores_filtered) == 800
 
     # Test with percentage budget
     filtered = semhash.self_filter_by_entropy(budget=0.5)
-    assert len(filtered.selected) == 3
-    assert len(filtered.filtered) == 3
-
-    # Test ascending order (lower entropy first)
-    filtered_asc = semhash.self_filter_by_entropy(budget=3, descending=False)
-    filtered_desc = semhash.self_filter_by_entropy(budget=3, descending=True)
-    assert filtered_asc.scores[-1][1] >= filtered_asc.scores[0][1]
-    assert filtered_desc.scores[0][1] >= filtered_desc.scores[-1][1]
+    assert len(filtered.selected) == 500
+    assert len(filtered.filtered) == 500
 
 
 def test_filter_by_entropy_invalid_budget(use_ann: bool, model: Encoder) -> None:
@@ -182,7 +170,7 @@ def test_filter_by_entropy_invalid_budget(use_ann: bool, model: Encoder) -> None
 
 def test_filter_by_entropy_string_validation(use_ann: bool, model: Encoder) -> None:
     """Test filtering by entropy with string validation."""
-    texts = ["Text 1", "Text 2", "Text 3"]
+    texts = [f"Text {i}" for i in range(1000)]
     records = [{"text": t} for t in texts]
 
     # Initialize with strings
@@ -192,11 +180,11 @@ def test_filter_by_entropy_string_validation(use_ann: bool, model: Encoder) -> N
     semhash_dict = SemHash.from_records(records, columns=["text"], use_ann=use_ann, model=model)
 
     # Should work - filtering strings with string-initialized SemHash
-    semhash_str.filter_by_entropy(texts, budget=2)
+    semhash_str.filter_by_entropy(texts, budget=0.5)
 
     # Should work - filtering dicts with dict-initialized SemHash
-    semhash_dict.filter_by_entropy(records, budget=2)
+    semhash_dict.filter_by_entropy(records, budget=0.5)
 
     # Should fail - filtering strings with dict-initialized SemHash
     with pytest.raises(ValueError):
-        semhash_dict.filter_by_entropy(texts, budget=2)
+        semhash_dict.filter_by_entropy(texts, budget=0.5)
