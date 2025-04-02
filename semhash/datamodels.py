@@ -1,3 +1,4 @@
+import warnings
 from dataclasses import dataclass, field
 from typing import Generic, Optional, TypeVar
 
@@ -49,11 +50,9 @@ class DeduplicationResult(Generic[Record]):
 
     def __post_init__(self) -> None:
         """Initialize deprecated fields and warn about deprecation."""
-        import warnings
-
         if self.deduplicated or self.duplicates:
             warnings.warn(
-                "'deduplicated' and 'duplicates' fields are deprecated. Use 'selected' and 'filtered' instead.",
+                "'deduplicated' and 'duplicates' fields are deprecated and will be removed in a `semhash==0.3.0` release. Use 'selected' and 'filtered' instead.",
                 DeprecationWarning,
                 stacklevel=2,
             )
